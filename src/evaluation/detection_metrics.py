@@ -1,0 +1,121 @@
+"""Single-image, class-aware detection metrics for matched ground truth only."""
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+from typing import Iterable
+
+from src.data.annotations.common import GroundTruthBox
+from src.data.categories import VEHICLE_CLASSES
+from src.detection.models import Detection
+
+DEFAULT_IOU_THRESHOLD = 0.50
+
+
+@dataclass(frozen=True)
+class ImageEvaluation:
+    image_name: str
+    sample_size: int
+    confidence_threshold: float
+    iou_threshold: float
+    true_positives: int
+    false_positives: int
+    false_negatives: int
+    precision: float | None
+    recall: float | None
+    f1: float | None
+    predicted_vehicle_count: int
+    ground_truth_vehicle_count: int
+    vehicle_count_mae: float
+    category_mapping: str
+    matching_rule: str
+    notes: str
+
+
+def intersection_over_union(
+    first: tuple[float, float, float, float],
+    second: tuple[float, float, float, float],
+) -> float:
+    """Compute continuous-coordinate IoU for two xyxy boxes."""
+    ax1, ay1, ax2, ay2 = first
+    bx1, by1, bx2, by2 = second
+    intersection_width = max(0.0, min(ax2, bx2) - max(ax1, bx1))
+    intersection_height = max(0.0, min(ay2, by2) - max(ay1, by1))
+    intersection = intersection_width * intersection_height
+    area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+    area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+    union = area_a + area_b - intersection
+    return intersection / union if union > 0 else 0.0
+
+
+def evaluate_image(
+    predictions: Iterable[Detection],
+    ground_truth: Iterable[GroundTruthBox],
+    image_name: str,
+    confidence_threshold: float,
+    iou_threshold: float = DEFAULT_IOU_THRESHOLD,
+) -> ImageEvaluation:
+    """Evaluate one image with confidence filtering and greedy one-to-one IoU.
+
+    A prediction is a true positive if it has the same supported class as an
+    unmatched ground-truth box and IoU >= the configured threshold. Predictions
+    are considered in descending confidence order. This is per-image precision,
+    recall, F1, and supported-class count MAE—not dataset-level mAP.
+    """
+    if not isinstance(confidence_threshold, (int, float)) or not math.isfinite(float(confidence_threshold)) or not 0.0 <= float(confidence_threshold) <= 1.0:
+        raise ValueError("confidence_threshold must be a finite value within [0, 1]")
+    if not isinstance(iou_threshold, (int, float)) or not math.isfinite(float(iou_threshold)) or not 0.0 < float(iou_threshold) <= 1.0:
+        raise ValueError("iou_threshold must be a finite value within (0, 1]")
+    threshold = float(confidence_threshold)
+    iou_limit = float(iou_threshold)
+    pred = [item for item in predictions if item.confidence >= threshold and item.vehicle_class in VEHICLE_CLASSES]
+    truth = [item for item in ground_truth if item.vehicle_class in VEHICLE_CLASSES]
+    pred.sort(key=lambda item: (-item.confidence, item.vehicle_class, item.box_xyxy))
+    matched_truth: set[int] = set()
+    true_positives = 0
+    false_positives = 0
+    for prediction in pred:
+        candidates = [
+            (intersection_over_union(prediction.box_xyxy, target.box_xyxy), index)
+            for index, target in enumerate(truth)
+            if index not in matched_truth and target.vehicle_class == prediction.vehicle_class
+        ]
+        best_iou, best_index = max(candidates, default=(0.0, -1))
+        if best_index >= 0 and best_iou >= iou_limit:
+            matched_truth.add(best_index)
+            true_positives += 1
+        else:
+            false_positives += 1
+    false_negatives = len(truth) - true_positives
+    precision = true_positives / (true_positives + false_positives) if true_positives + false_positives else None
+    recall = true_positives / (true_positives + false_negatives) if true_positives + false_negatives else None
+    if precision is not None and recall is not None and precision + recall > 0:
+        f1: float | None = 2 * precision * recall / (precision + recall)
+    else:
+        f1 = None
+    predicted_count = len(pred)
+    ground_truth_count = len(truth)
+    return ImageEvaluation(
+        image_name=image_name,
+        sample_size=1,
+        confidence_threshold=threshold,
+        iou_threshold=iou_limit,
+        true_positives=true_positives,
+        false_positives=false_positives,
+        false_negatives=false_negatives,
+        precision=precision,
+        recall=recall,
+        f1=f1,
+        predicted_vehicle_count=predicted_count,
+        ground_truth_vehicle_count=ground_truth_count,
+        vehicle_count_mae=float(abs(predicted_count - ground_truth_count)),
+        category_mapping=(
+            "Model and annotation category names are normalized through explicit aliases to car, truck, bus, motorcycle; "
+            "unmapped classes are excluded."
+        ),
+        matching_rule=f"Greedy confidence-sorted, class-aware one-to-one matching at IoU >= {iou_limit:.2f}.",
+        notes=(
+            "One matched image only. This is not a dataset-level metric or mAP. "
+            "Count MAE is for the four mapped vehicle classes only."
+        ),
+    )

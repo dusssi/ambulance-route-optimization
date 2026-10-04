@@ -1,0 +1,32 @@
+# Python environments and bytecode
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Streamlit and model/runtime caches
+.streamlit/secrets.toml
+.ultralytics/
+.cache/
+runs/
+/weights/
+wandb/
+*.pt
+*.onnx
+*.engine
+
+# Local datasets and generated artifacts; keep only directory placeholders
+/data/bdd100k/**
+!/data/bdd100k/.gitkeep
+/data/idd/**
+!/data/idd/.gitkeep
+/outputs/**
+!/outputs/.gitkeep
+
+# Local environment files and Kaggle credentials
+.env
+kaggle.json
+**/kaggle.json

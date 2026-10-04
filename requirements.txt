@@ -1,0 +1,11 @@
+# Tested with Python 3.11.2. Keep these direct runtime/test dependencies aligned.
+streamlit==1.65.0
+ultralytics==8.4.172
+# Ultralytics also declares opencv-python; scripts/install_dependencies.sh selects
+# this headless build if the host lacks the system libGL runtime.
+opencv-python-headless==4.14.0.94
+Pillow==12.3.0
+numpy==2.4.6
+pandas==2.3.3
+ijson==3.5.1
+pytest==8.4.2
