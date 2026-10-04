@@ -119,3 +119,42 @@ def evaluate_image(
             "Count MAE is for the four mapped vehicle classes only."
         ),
     )
+
+
+def aggregate_evaluations(evaluations):
+    """Aggregate image evaluations into dataset-level detection metrics."""
+    evaluations = list(evaluations)
+    if not evaluations:
+        raise ValueError("Cannot aggregate an empty evaluation list")
+
+    tp = sum(item.true_positives for item in evaluations)
+    fp = sum(item.false_positives for item in evaluations)
+    fn = sum(item.false_negatives for item in evaluations)
+
+    precision = tp / (tp + fp) if tp + fp else None
+    recall = tp / (tp + fn) if tp + fn else None
+    f1 = (
+        2 * precision * recall / (precision + recall)
+        if precision is not None and recall is not None
+        and precision + recall > 0
+        else None
+    )
+
+    return {
+        "sample_size": len(evaluations),
+        "true_positives": tp,
+        "false_positives": fp,
+        "false_negatives": fn,
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+        "predicted_vehicle_count": sum(
+            item.predicted_vehicle_count for item in evaluations
+        ),
+        "ground_truth_vehicle_count": sum(
+            item.ground_truth_vehicle_count for item in evaluations
+        ),
+        "vehicle_count_mae": sum(
+            item.vehicle_count_mae for item in evaluations
+        ) / len(evaluations),
+    }

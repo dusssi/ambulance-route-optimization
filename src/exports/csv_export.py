@@ -48,3 +48,8 @@ def write_csv(path: str | Path, csv_text: str) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(csv_text, encoding="utf-8", newline="")
     return destination
+
+
+def rows_to_csv(rows, columns):
+    """Serialize arbitrary evaluation rows using an explicit column order."""
+    return _to_csv(rows, tuple(columns))

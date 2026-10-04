@@ -66,7 +66,11 @@ def _iter_json_records(path: Path) -> tuple[Iterator[Any], str | None]:
         return iter(()), f"could not read JSON: {exc}"
 
 
-def parse_bdd100k_json(path: str | Path) -> ParsedAnnotationFile:
+def parse_bdd100k_json(
+    path: str | Path,
+    image_name_override: str | None = None,
+) -> ParsedAnnotationFile:
+    """Parse BDD100K object boxes from legacy labels or frames/objects JSON."""
     path = Path(path)
     records, read_error = _iter_json_records(path)
     if read_error:
@@ -78,37 +82,83 @@ def parse_bdd100k_json(path: str | Path) -> ParsedAnnotationFile:
     unmapped: dict[str, int] = {}
     invalid_image_names: list[str] = []
     recognized = False
-    record_number = 0
+
     try:
         for record_number, record in enumerate(records, 1):
             if not isinstance(record, dict):
                 issues.append(f"{path}: record {record_number} is not an object")
                 continue
-            image_name = record.get("name") or record.get("image") or record.get("file_name")
+
+            image_name = image_name_override or record.get("name") or record.get("image") or record.get("file_name")
+            if not isinstance(image_name, str) or not image_name.strip():
+                continue
+
+            # Support BDD100K detection JSON: name + frames[0].objects.
+            frames = record.get("frames")
+            if isinstance(frames, list):
+                recognized = True
+                image_names.append(image_name)
+                if not frames:
+                    invalid_image_names.append(image_name)
+                    issues.append(f"{path}: record {record_number} has an empty frames array")
+                    continue
+
+                frame = frames[0]
+                objects = frame.get("objects") if isinstance(frame, dict) else None
+                if not isinstance(objects, list):
+                    invalid_image_names.append(image_name)
+                    issues.append(f"{path}: record {record_number} has no valid objects array")
+                    continue
+
+                for object_number, obj in enumerate(objects, 1):
+                    if not isinstance(obj, dict):
+                        invalid_image_names.append(image_name)
+                        issues.append(f"{path}: record {record_number}, object {object_number} is not an object")
+                        continue
+
+                    category = obj.get("category")
+                    box = obj.get("box2d")
+                    if not isinstance(category, str) or not isinstance(box, dict):
+                        # Polygons/attributes are not bounding-box annotations.
+                        continue
+
+                    try:
+                        xyxy = parse_xyxy((box["x1"], box["y1"], box["x2"], box["y2"]))
+                    except (KeyError, TypeError, ValueError) as exc:
+                        invalid_image_names.append(image_name)
+                        issues.append(
+                            f"{path}: record {record_number}, object {object_number}: invalid box: {exc}"
+                        )
+                        continue
+
+                    if canonical_vehicle_class(category) is None:
+                        unmapped[category] = unmapped.get(category, 0) + 1
+                    else:
+                        annotations.append(RawAnnotation(image_name, category, xyxy))
+                continue
+
+            # Preserve legacy BDD-style name + labels + box2d records.
             labels = record.get("labels")
-            if not isinstance(image_name, str):
-                continue
-            image_names.append(image_name)
-            recognized = True
             if not isinstance(labels, list):
-                invalid_image_names.append(image_name)
-                issues.append(f"{path}: record {record_number} has no valid labels array")
                 continue
+
+            recognized = True
+            image_names.append(image_name)
             for object_number, label in enumerate(labels, 1):
                 if not isinstance(label, dict):
                     invalid_image_names.append(image_name)
                     issues.append(f"{path}: record {record_number}, label {object_number} is not an object")
                     continue
+
                 category = label.get("category") or label.get("name")
                 box = label.get("box2d")
                 if not isinstance(category, str) or not isinstance(box, dict):
-                    # Some records contain crowd/segmentation annotations without
-                    # the box schema needed for object-detection evaluation.
                     invalid_image_names.append(image_name)
                     issues.append(
                         f"{path}: record {record_number}, label {object_number} lacks category/box2d"
                     )
                     continue
+
                 try:
                     xyxy = parse_xyxy((box["x1"], box["y1"], box["x2"], box["y2"]))
                 except (KeyError, TypeError, ValueError) as exc:
@@ -117,15 +167,21 @@ def parse_bdd100k_json(path: str | Path) -> ParsedAnnotationFile:
                         f"{path}: record {record_number}, label {object_number}: invalid box: {exc}"
                     )
                     continue
+
                 if canonical_vehicle_class(category) is None:
                     unmapped[category] = unmapped.get(category, 0) + 1
                 else:
                     annotations.append(RawAnnotation(image_name, category, xyxy))
+
     except (ValueError, OSError, UnicodeDecodeError) as exc:
         return ParsedAnnotationFile(False, issues=(f"{path}: {exc}",))
 
     if not recognized:
-        return ParsedAnnotationFile(False, issues=(f"{path}: no BDD100K name/labels records were recognized",))
+        return ParsedAnnotationFile(
+            False,
+            issues=(f"{path}: no recognized BDD100K frames/objects or name/labels records",),
+        )
+
     return ParsedAnnotationFile(
         recognized=True,
         format_name="BDD100K detection JSON",
@@ -135,3 +191,4 @@ def parse_bdd100k_json(path: str | Path) -> ParsedAnnotationFile:
         unmapped_categories=tuple(sorted(unmapped.items())),
         invalid_image_names=tuple(dict.fromkeys(invalid_image_names)),
     )
+
