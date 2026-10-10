@@ -1,8 +1,10 @@
 """Reader for the BDD100K object-detection JSON schema.
 
-Supports the common BDD100K records containing ``name`` and ``labels`` with
-``category`` and ``box2d`` fields. This is parser capability, not a claim that
-the Kaggle archive has been downloaded or verified in this checkout.
+Supports common BDD100K records containing ``name`` and ``labels`` or
+``frames``/``objects`` with ``category`` and ``box2d`` fields. A caller may
+provide a safe image-name fallback for a verified single-record per-image
+file. This is parser capability, not a claim that the Kaggle archive has been
+downloaded or verified in this checkout.
 """
 from __future__ import annotations
 
@@ -40,10 +42,14 @@ def _iter_json_records(path: Path) -> tuple[Iterator[Any], str | None]:
         if first == b"[":
             try:
                 import ijson
+                from ijson.common import JSONError as IJSONError
 
                 def stream_items() -> Iterator[Any]:
                     with path.open("rb") as handle:
-                        yield from ijson.items(handle, "item")
+                        try:
+                            yield from ijson.items(handle, "item")
+                        except IJSONError as exc:
+                            raise ValueError(f"invalid JSON: {exc}") from exc
 
                 return stream_items(), None
             except ImportError:
@@ -70,17 +76,39 @@ def parse_bdd100k_json(
     path: str | Path,
     image_name_override: str | None = None,
 ) -> ParsedAnnotationFile:
-    """Parse BDD100K object boxes from legacy labels or frames/objects JSON."""
+    """Parse BDD100K boxes; an explicit filename fallback requires one record."""
     path = Path(path)
     records, read_error = _iter_json_records(path)
     if read_error:
         return ParsedAnnotationFile(False, issues=(f"{path}: {read_error}",))
+
+    if image_name_override is not None:
+        # A filename fallback is safe only for a one-record per-image file.
+        # Do not apply one filename to every record in a global label archive.
+        sentinel = object()
+        try:
+            first_record = next(records, sentinel)
+            second_record = next(records, sentinel)
+        except (ValueError, OSError, UnicodeDecodeError) as exc:
+            return ParsedAnnotationFile(
+                False,
+                issues=(f"{path}: could not verify a single record for the filename fallback: {exc}",),
+            )
+        if first_record is sentinel:
+            return ParsedAnnotationFile(False, issues=(f"{path}: no record to associate with the filename fallback",))
+        if second_record is not sentinel:
+            return ParsedAnnotationFile(
+                False,
+                issues=(f"{path}: filename fallback requires exactly one record; found multiple records",),
+            )
+        records = iter((first_record,))
 
     annotations: list[RawAnnotation] = []
     image_names: list[str] = []
     issues: list[str] = []
     unmapped: dict[str, int] = {}
     invalid_image_names: list[str] = []
+    unattributed_invalid_record = False
     recognized = False
 
     try:
@@ -89,18 +117,39 @@ def parse_bdd100k_json(
                 issues.append(f"{path}: record {record_number} is not an object")
                 continue
 
-            image_name = image_name_override or record.get("name") or record.get("image") or record.get("file_name")
+            image_name = next(
+                (
+                    value
+                    for key in ("name", "image", "file_name")
+                    if isinstance((value := record.get(key)), str) and value.strip()
+                ),
+                image_name_override,
+            )
+            has_frames = "frames" in record
+            has_labels = "labels" in record
             if not isinstance(image_name, str) or not image_name.strip():
+                if has_frames or has_labels:
+                    issues.append(f"{path}: record {record_number} has no valid image identifier")
+                    unattributed_invalid_record = True
                 continue
 
-            # Support BDD100K detection JSON: name + frames[0].objects.
+            # Support the per-image BDD100K shape: name + one frame + objects.
+            # A multi-frame record cannot safely be matched to one still image;
+            # withhold it rather than silently evaluating only frames[0].
             frames = record.get("frames")
-            if isinstance(frames, list):
+            if has_frames:
                 recognized = True
                 image_names.append(image_name)
-                if not frames:
+                if not isinstance(frames, list):
                     invalid_image_names.append(image_name)
-                    issues.append(f"{path}: record {record_number} has an empty frames array")
+                    issues.append(f"{path}: record {record_number} has no valid frames array")
+                    continue
+                if len(frames) != 1:
+                    invalid_image_names.append(image_name)
+                    issues.append(
+                        f"{path}: record {record_number} must contain exactly one frame for a single-image annotation; "
+                        f"found {len(frames)}"
+                    )
                     continue
 
                 frame = frames[0]
@@ -118,8 +167,21 @@ def parse_bdd100k_json(
 
                     category = obj.get("category")
                     box = obj.get("box2d")
-                    if not isinstance(category, str) or not isinstance(box, dict):
-                        # Polygons/attributes are not bounding-box annotations.
+                    if not isinstance(category, str) or not category.strip():
+                        invalid_image_names.append(image_name)
+                        issues.append(
+                            f"{path}: record {record_number}, object {object_number} has no valid category"
+                        )
+                        continue
+                    if not isinstance(box, dict):
+                        # Some non-vehicle shapes (for example polygons) are
+                        # not object-detection boxes. A missing box for a mapped
+                        # vehicle, however, makes this image unevaluable.
+                        if canonical_vehicle_class(category) is not None:
+                            invalid_image_names.append(image_name)
+                            issues.append(
+                                f"{path}: record {record_number}, object {object_number} ({category}) has no box2d"
+                            )
                         continue
 
                     try:
@@ -140,6 +202,11 @@ def parse_bdd100k_json(
             # Preserve legacy BDD-style name + labels + box2d records.
             labels = record.get("labels")
             if not isinstance(labels, list):
+                if has_labels:
+                    recognized = True
+                    image_names.append(image_name)
+                    invalid_image_names.append(image_name)
+                    issues.append(f"{path}: record {record_number} has no valid labels array")
                 continue
 
             recognized = True
@@ -177,10 +244,12 @@ def parse_bdd100k_json(
         return ParsedAnnotationFile(False, issues=(f"{path}: {exc}",))
 
     if not recognized:
-        return ParsedAnnotationFile(
-            False,
-            issues=(f"{path}: no recognized BDD100K frames/objects or name/labels records",),
-        )
+        issues.append(f"{path}: no recognized BDD100K frames/objects or name/labels records")
+        return ParsedAnnotationFile(False, issues=tuple(issues))
+    if unattributed_invalid_record:
+        # Without an image identifier the malformed record cannot be matched
+        # safely; withhold any named records from this same annotation file.
+        invalid_image_names.extend(image_names)
 
     return ParsedAnnotationFile(
         recognized=True,

@@ -25,6 +25,7 @@ class DetectionRun:
     model_class_names: dict[int, str]
     vehicle_class_ids: dict[int, str]
     inference_seconds: float
+    image_size: tuple[int, int] | None = None
 
     @property
     def vehicle_count(self) -> int:

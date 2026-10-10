@@ -81,13 +81,17 @@ class ImageLookup:
         self.root = root.resolve()
         self.exact: dict[str, list[Path]] = {}
         self.basename: dict[str, list[Path]] = {}
+        self.paths: set[Path] = set()
         for path in image_paths:
             try:
-                relative = path.resolve().relative_to(self.root).as_posix()
+                resolved_path = path.resolve()
+                relative = resolved_path.relative_to(self.root).as_posix()
             except (ValueError, OSError):
+                resolved_path = path.absolute()
                 relative = path.as_posix()
-            self.exact.setdefault(_normalize_path(relative), []).append(path.resolve())
-            self.basename.setdefault(path.name.casefold(), []).append(path.resolve())
+            self.paths.add(resolved_path)
+            self.exact.setdefault(_normalize_path(relative), []).append(resolved_path)
+            self.basename.setdefault(path.name.casefold(), []).append(resolved_path)
 
     def resolve(self, image_name: str) -> tuple[Path | None, str | None]:
         raw = str(image_name or "").strip().replace("\\", "/")
@@ -99,7 +103,7 @@ class ImageLookup:
         if candidate.is_absolute():
             try:
                 resolved = candidate.resolve()
-                if resolved.is_file() and resolved in {p for values in self.exact.values() for p in values}:
+                if resolved.is_file() and resolved in self.paths:
                     return resolved, None
             except OSError:
                 pass
@@ -129,10 +133,18 @@ def _normalize_path(value: str) -> str:
 
 
 def parse_xyxy(values: Iterable[object]) -> tuple[float, float, float, float]:
-    items = tuple(float(value) for value in values)
+    raw_items = tuple(values)
+    if any(isinstance(value, bool) for value in raw_items):
+        raise ValueError("bounding-box coordinates must be numeric, not boolean")
+    try:
+        items = tuple(float(value) for value in raw_items)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("bounding-box coordinates must be numeric") from exc
     if len(items) != 4 or not all(math.isfinite(value) for value in items):
         raise ValueError("bounding box must contain four finite coordinates")
     x1, y1, x2, y2 = items
+    if x1 < 0 or y1 < 0:
+        raise ValueError("bounding-box top-left coordinates must be nonnegative")
     if x2 <= x1 or y2 <= y1:
         raise ValueError("bounding box must have positive width and height")
     return x1, y1, x2, y2

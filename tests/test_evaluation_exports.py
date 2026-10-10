@@ -56,6 +56,33 @@ def test_detection_csv_has_defined_schema_and_actual_values() -> None:
     assert rows[0]["x2"] == "30.0"
 
 
+def test_duplicate_predictions_are_one_true_positive_plus_a_false_positive() -> None:
+    truth = [GroundTruthBox("car", "car", (0, 0, 10, 10))]
+    duplicate_boxes = [
+        Detection(2, "car", "car", 0.95, (0, 0, 10, 10)),
+        Detection(2, "car", "car", 0.85, (0, 0, 10, 10)),
+    ]
+    result = evaluate_image(duplicate_boxes, truth, "duplicate.jpg", 0.25, 0.50)
+    assert (result.true_positives, result.false_positives, result.false_negatives) == (1, 1, 0)
+    assert result.predicted_vehicle_count == 2
+
+
+def test_evaluation_rejects_invalid_supported_prediction_boxes() -> None:
+    import pytest
+
+    malformed = Detection(2, "car", "car", 0.9, (-1.0, 0.0, 5.0, 5.0))
+    with pytest.raises(ValueError, match="nonnegative origin"):
+        evaluate_image([malformed], (), "bad-box.jpg", 0.25)
+
+
+def test_evaluation_checks_box_bounds_when_image_dimensions_are_available() -> None:
+    import pytest
+
+    outside = GroundTruthBox("car", "car", (0, 0, 101, 10))
+    with pytest.raises(ValueError, match="exceeds image bounds"):
+        evaluate_image((), [outside], "outside.jpg", 0.25, image_size=(100, 80))
+
+
 def test_empty_detection_csv_is_header_only_and_evaluation_csv_is_one_row() -> None:
     empty_text = detections_to_csv(_run(()))
     assert next(csv.reader(io.StringIO(empty_text))) == list(DETECTION_COLUMNS)

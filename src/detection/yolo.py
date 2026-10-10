@@ -26,6 +26,9 @@ from src.detection.models import Detection, DetectionRun
 
 DEFAULT_MODEL = "yolo11n.pt"
 DEFAULT_CONFIDENCE = 0.25
+DEFAULT_IMAGE_SIZE = 640
+DEFAULT_NMS_IOU = 0.70
+DEFAULT_MAX_DETECTIONS = 300
 
 
 class DetectionError(RuntimeError):
@@ -141,6 +144,9 @@ class YOLOVehicleDetector:
                 "source": image.convert("RGB"),
                 "conf": threshold,
                 "classes": sorted(self._vehicle_ids),
+                "imgsz": DEFAULT_IMAGE_SIZE,
+                "iou": DEFAULT_NMS_IOU,
+                "max_det": DEFAULT_MAX_DETECTIONS,
                 "verbose": False,
             }
             if self.device:
@@ -171,15 +177,31 @@ class YOLOVehicleDetector:
                     # verified label map, not an assumed COCO index.
                     continue
                 bbox = tuple(float(value) for value in coordinates)
-                if len(bbox) != 4 or not all(math.isfinite(value) for value in bbox):
+                score = float(confidence)
+                if (
+                    len(bbox) != 4
+                    or not all(math.isfinite(value) for value in bbox)
+                    or not math.isfinite(score)
+                    or not 0.0 <= score <= 1.0
+                ):
+                    continue
+                x1, y1, x2, y2 = bbox
+                if (
+                    x1 < 0.0
+                    or y1 < 0.0
+                    or x2 <= x1
+                    or y2 <= y1
+                    or x2 > image.width
+                    or y2 > image.height
+                ):
                     continue
                 detections.append(
                     Detection(
                         class_id=class_id,
                         model_class_name=model_name,
                         vehicle_class=vehicle_class,
-                        confidence=float(confidence),
-                        box_xyxy=(bbox[0], bbox[1], bbox[2], bbox[3]),
+                        confidence=score,
+                        box_xyxy=(x1, y1, x2, y2),
                     )
                 )
         counts = {name: 0 for name in VEHICLE_CLASSES}
@@ -196,4 +218,5 @@ class YOLOVehicleDetector:
             model_class_names=dict(self._names),
             vehicle_class_ids=dict(self._vehicle_ids),
             inference_seconds=elapsed,
+            image_size=image.size,
         )

@@ -35,9 +35,10 @@ def cached_discovery(dataset_name: str, root_path: str) -> DatasetDiscovery:
     return discover_dataset(dataset_name, root_path)
 
 
-@st.cache_data(show_spinner=False, ttl=300)
+@st.cache_data(show_spinner=False)
 def cached_annotation_scan(dataset_name: str, root_path: str) -> AnnotationScan:
-    return scan_annotations(discover_dataset(dataset_name, root_path))
+    # Reuse the discovery result instead of walking a large dataset twice.
+    return scan_annotations(cached_discovery(dataset_name, root_path))
 
 
 @st.cache_resource(show_spinner=False)
@@ -154,10 +155,93 @@ def _format_metric(value: float | None) -> str:
 
 
 st.set_page_config(page_title="Ambulance Route Optimization", page_icon="🚑", layout="wide")
+st.markdown(
+    """
+    <style>
+      :root {
+        --aro-ink: #172b3a;
+        --aro-muted: #5b6b7a;
+        --aro-border: #dce4eb;
+        --aro-blue: #1769aa;
+        --aro-surface: #ffffff;
+      }
+      [data-testid="stAppViewContainer"] { background: #f5f7fa; color: var(--aro-ink); }
+      [data-testid="stMainBlockContainer"] {
+        max-width: 1500px;
+        padding: 1.4rem clamp(1rem, 3vw, 2.5rem) 3rem;
+      }
+      [data-testid="stHeader"] { background: rgba(245, 247, 250, 0.88); }
+      h1, h2, h3 { color: var(--aro-ink); letter-spacing: -0.02em; }
+      h1 { font-size: clamp(1.8rem, 3vw, 2.55rem) !important; line-height: 1.15 !important; }
+      [data-testid="stCaptionContainer"] { color: var(--aro-muted); }
+      [data-testid="stMetric"] {
+        background: var(--aro-surface);
+        border: 1px solid var(--aro-border);
+        border-radius: 14px;
+        padding: 0.9rem 1rem;
+        box-shadow: 0 2px 8px rgba(20, 43, 61, 0.04);
+        min-width: 0;
+      }
+      [data-testid="stMetricLabel"] { color: var(--aro-muted); }
+      [data-testid="stMetricValue"] { color: var(--aro-ink); }
+      [data-testid="stTabs"] button[role="tab"] {
+        border-radius: 10px 10px 0 0;
+        padding: 0.65rem 0.9rem;
+        transition: color 140ms ease, background-color 140ms ease;
+      }
+      [data-testid="stTabs"] button[aria-selected="true"] {
+        color: var(--aro-blue);
+        background: #eaf2fa;
+      }
+      [data-testid="stVerticalBlockBorderWrapper"], [data-testid="stExpander"] {
+        border-radius: 14px;
+      }
+      [data-testid="stAlert"] { border-radius: 12px; }
+      [data-testid="stImage"] img { border: 1px solid var(--aro-border); border-radius: 12px; }
+      [data-testid="stDataFrame"], [data-testid="stTable"], [data-testid="stGraphVizChart"] {
+        max-width: 100%; overflow-x: auto;
+      }
+      .stButton > button, [data-testid="stDownloadButton"] button {
+        border-radius: 10px;
+        min-height: 2.65rem;
+        font-weight: 600;
+        transition: transform 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+      }
+      .stButton > button:hover, [data-testid="stDownloadButton"] button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(23, 105, 170, 0.14);
+      }
+      @media (max-width: 900px) {
+        [data-testid="stMainBlockContainer"] { padding-inline: 1rem; }
+        div[data-testid="stHorizontalBlock"] { flex-wrap: wrap !important; gap: 0.55rem !important; }
+        div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+          flex: 1 1 calc(50% - 0.4rem) !important;
+          width: calc(50% - 0.4rem) !important;
+          min-width: calc(50% - 0.4rem) !important;
+        }
+        [data-testid="stTabs"] div[role="tablist"] { overflow-x: auto; white-space: nowrap; }
+        [data-testid="stMetric"] { padding: 0.7rem; }
+        [data-testid="stMetricLabel"] { font-size: 0.82rem; }
+        [data-testid="stMetricValue"] { font-size: 1.4rem; }
+        .stButton > button, [data-testid="stDownloadButton"] button { width: 100%; }
+      }
+      @media (max-width: 420px) {
+        div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+          flex-basis: 100% !important; width: 100% !important; min-width: 100% !important;
+        }
+        [data-testid="stMainBlockContainer"] { padding-inline: 0.75rem; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+      }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 st.title("Computer Vision-Based Traffic Load & Ambulance Route Optimization")
 st.caption("Academic prototype · local images · illustrative graph · no live dispatch or real-world ETA")
 
-with st.expander("Project overview and limitations", expanded=True):
+with st.expander("Project overview and limitations", expanded=False):
     st.markdown(
         "**Pipeline:** road-scene image → pretrained YOLO vehicle detections → bounded image-based count proxy → "
         "traffic-adjusted illustrative graph → Dijkstra/A* comparison."
@@ -186,6 +270,8 @@ with dataset_tab:
     if st.button("Refresh local file discovery", help="Clear cached scans after extracting/copying local dataset files."):
         cached_discovery.clear()
         cached_annotation_scan.clear()
+        for name in DATASETS:
+            st.session_state.pop(f"annotation_scan_requested::{name}", None)
         st.rerun()
 
     discoveries: dict[str, DatasetDiscovery] = {}
@@ -194,12 +280,35 @@ with dataset_tab:
         discovery = cached_discovery(dataset_name, root_text)
         discoveries[dataset_name] = discovery
         scan: AnnotationScan | None = None
+        scan_key = f"annotation_scan_requested::{dataset_name}"
+        if st.session_state.get(scan_key) != root_text:
+            st.session_state.pop(scan_key, None)
+
         if discovery.root_exists and discovery.annotation_file_count:
-            try:
-                with st.spinner(f"Inspecting {dataset_name} annotation schemas and image matches…"):
-                    scan = cached_annotation_scan(dataset_name, root_text)
-            except Exception as exc:
-                st.error(f"Annotation scan failed for {dataset_name}: {type(exc).__name__}: {exc}")
+            scan_now = st.button(
+                f"Scan {dataset_name} annotation files ({discovery.annotation_file_count:,})",
+                key=f"scan_annotations::{dataset_name}",
+                help=(
+                    "Explicitly parse the discovered candidate annotation files. This can take several minutes "
+                    "for a large dataset; image discovery and the evaluation subset runner do not require a full scan."
+                ),
+            )
+            if scan_now:
+                st.session_state[scan_key] = root_text
+                cached_annotation_scan.clear()
+            if scan_now or st.session_state.get(scan_key) == root_text:
+                try:
+                    with st.spinner(
+                        f"Inspecting {dataset_name} annotation schemas and image matches; large archives may take time…"
+                    ):
+                        scan = cached_annotation_scan(dataset_name, root_text)
+                except Exception as exc:
+                    st.error(f"Annotation scan failed for {dataset_name}: {type(exc).__name__}: {exc}")
+            else:
+                st.caption(
+                    f"Full annotation parsing is paused. Click the scan button to inspect all "
+                    f"{discovery.annotation_file_count:,} candidate file(s)."
+                )
         scans[dataset_name] = scan
         status, explanation = _status_for_dataset(discovery, scan)
         with st.container(border=True):
@@ -391,11 +500,11 @@ with detection_tab:
     ):
         left, right = st.columns(2)
         with left:
-            st.image(current_image, caption=f"Original · {run.image_name}", use_container_width=True)
+            st.image(current_image, caption=f"Original · {run.image_name}", width="stretch")
         try:
             annotated = annotate_image(current_image, run.detections)
             with right:
-                st.image(annotated, caption="Actual YOLO detections · boxes show class and confidence", use_container_width=True)
+                st.image(annotated, caption="Actual YOLO detections · boxes show class and confidence", width="stretch")
         except Exception as exc:
             st.error(f"Could not draw detection overlays: {exc}")
         st.caption(
@@ -418,7 +527,7 @@ with detection_tab:
                     "x2": item.box_xyxy[2], "y2": item.box_xyxy[3],
                 }
                 for item in run.detections
-            ]), use_container_width=True, hide_index=True)
+            ]), width="stretch", hide_index=True)
         else:
             st.info("The actual inference returned zero detections for the four supported vehicle classes at this threshold.")
     elif isinstance(run, DetectionRun):
@@ -446,6 +555,10 @@ with detection_tab:
         proxy_columns = st.columns(2)
         proxy_columns[0].metric("Image-based load proxy (0–1)", f"{active_proxy.load_fraction:.3f}")
         proxy_columns[1].metric("Illustrative density class (display only)", density_level)
+        traffic_status = {"Low": st.success, "Medium": st.warning, "High": st.error}[density_level]
+        traffic_status(
+            f"Display-only count class: {density_level}. It is not a calibrated physical congestion or safety assessment."
+        )
         st.write(f"Formula: `{active_proxy.formula}`")
         st.caption(
             f"Input: {active_run.vehicle_count} supported vehicle detections from {active_run.image_name}. "
@@ -475,7 +588,7 @@ with routing_tab:
         default_frame,
         num_rows="dynamic",
         key=edge_editor_key,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_config={
             "source": st.column_config.TextColumn("From node", required=True),
@@ -540,7 +653,7 @@ with routing_tab:
             for edge in graph.edges
         ])
         st.markdown("#### Edge-cost breakdown")
-        st.dataframe(adjusted_table, use_container_width=True, hide_index=True)
+        st.dataframe(adjusted_table, width="stretch", hide_index=True)
 
         st.markdown("#### Dijkstra vs A* (same graph and adjusted costs)")
         cols = st.columns(2)
@@ -568,7 +681,7 @@ with routing_tab:
         )
         path = comparison.dijkstra.path if comparison.dijkstra.found else ()
         st.markdown("#### Route visualization (Dijkstra route highlighted)")
-        st.graphviz_chart(_graph_dot(graph, path), use_container_width=True)
+        st.graphviz_chart(_graph_dot(graph, path), width="stretch")
         st.caption("Red edges are on the computed Dijkstra route; edge labels show base cost, load fraction, and final cost.")
     except (ValueError, TypeError, KeyError) as exc:
         st.error(f"Cannot calculate routes from the current graph: {exc}")
@@ -602,37 +715,42 @@ with evaluation_tab:
         else:
             iou_threshold = st.slider("IoU matching threshold", 0.05, 1.0, DEFAULT_IOU_THRESHOLD, 0.05)
             ground_truth = scan.boxes_for(run.image_key)
-            evaluation = evaluate_image(
-                predictions=run.detections,
-                ground_truth=ground_truth,
-                image_name=run.image_name,
-                confidence_threshold=run.confidence_threshold,
-                iou_threshold=iou_threshold,
-            )
-            st.markdown("**Evaluation sample size: 1 matched image**")
-            metrics = st.columns(5)
-            metrics[0].metric("True positives", evaluation.true_positives)
-            metrics[1].metric("False positives", evaluation.false_positives)
-            metrics[2].metric("False negatives", evaluation.false_negatives)
-            metrics[3].metric("Precision", _format_metric(evaluation.precision))
-            metrics[4].metric("Recall", _format_metric(evaluation.recall))
-            metrics2 = st.columns(3)
-            metrics2[0].metric("F1", _format_metric(evaluation.f1))
-            metrics2[1].metric("Predicted mapped vehicles", evaluation.predicted_vehicle_count)
-            metrics2[2].metric("Mapped ground-truth vehicles", evaluation.ground_truth_vehicle_count)
-            st.metric("Supported-class vehicle-count absolute error", f"{evaluation.vehicle_count_mae:.3f}")
-            st.write("Category mapping:", evaluation.category_mapping)
-            st.write("Matching rule:", evaluation.matching_rule)
-            st.info(evaluation.notes)
-            st.download_button(
-                "Download evaluation CSV (one row per evaluated image)",
-                data=evaluation_to_csv(evaluation, run.dataset_name),
-                file_name=f"evaluation_{Path(run.image_name).stem or 'image'}.csv",
-                mime="text/csv",
-            )
+            try:
+                evaluation = evaluate_image(
+                    predictions=run.detections,
+                    ground_truth=ground_truth,
+                    image_name=run.image_name,
+                    confidence_threshold=run.confidence_threshold,
+                    iou_threshold=iou_threshold,
+                    image_size=run.image_size,
+                )
+            except ValueError as exc:
+                st.error(f"Evaluation withheld because a prediction or annotation is malformed: {exc}")
+            else:
+                st.markdown("**Evaluation sample size: 1 matched image**")
+                metrics = st.columns(5)
+                metrics[0].metric("True positives", evaluation.true_positives)
+                metrics[1].metric("False positives", evaluation.false_positives)
+                metrics[2].metric("False negatives", evaluation.false_negatives)
+                metrics[3].metric("Precision", _format_metric(evaluation.precision))
+                metrics[4].metric("Recall", _format_metric(evaluation.recall))
+                metrics2 = st.columns(3)
+                metrics2[0].metric("F1", _format_metric(evaluation.f1))
+                metrics2[1].metric("Predicted mapped vehicles", evaluation.predicted_vehicle_count)
+                metrics2[2].metric("Mapped ground-truth vehicles", evaluation.ground_truth_vehicle_count)
+                st.metric("Supported-class vehicle-count absolute error", f"{evaluation.vehicle_count_mae:.3f}")
+                st.write("Category mapping:", evaluation.category_mapping)
+                st.write("Matching rule:", evaluation.matching_rule)
+                st.info(evaluation.notes)
+                st.download_button(
+                    "Download evaluation CSV (one row per evaluated image)",
+                    data=evaluation_to_csv(evaluation, run.dataset_name),
+                    file_name=f"evaluation_{Path(run.image_name).stem or 'image'}.csv",
+                    mime="text/csv",
+                )
     st.markdown("#### Metrics not currently reported")
     st.write(
-        "Dataset-level mAP, dataset comparison, and training/validation/test metrics are not reported by this single-image "
-        "baseline. They require a compatible, separated labeled sample and a documented dataset-level evaluation run. "
-        "No accuracy, mAP, MAE, latency, or route-improvement value is fabricated."
+        "Dataset-wide mAP, cross-dataset comparison, and training/validation/test metrics are not reported by the dashboard. "
+        "The separate `scripts/evaluate_bdd100k.py` runner can produce subset-level metrics when local data, a compatible "
+        "model, and a successful run are available. No accuracy, mAP, MAE, latency, or route-improvement value is fabricated."
     )
