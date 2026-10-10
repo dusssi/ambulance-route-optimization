@@ -259,5 +259,6 @@ def parse_bdd100k_json(
         issues=tuple(issues),
         unmapped_categories=tuple(sorted(unmapped.items())),
         invalid_image_names=tuple(dict.fromkeys(invalid_image_names)),
+        record_count=len(image_names),
     )
 

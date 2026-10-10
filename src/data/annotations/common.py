@@ -26,6 +26,10 @@ class ParsedAnnotationFile:
     issues: tuple[str, ...] = ()
     unmapped_categories: tuple[tuple[str, int], ...] = ()
     invalid_image_names: tuple[str, ...] = ()
+    # Total number of records carrying an image identifier, before ``image_names``
+    # is de-duplicated. A per-image BDD100K file must contain exactly one such
+    # record; the subset evaluation runner enforces that contract explicitly.
+    record_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +85,7 @@ class ImageLookup:
         self.root = root.resolve()
         self.exact: dict[str, list[Path]] = {}
         self.basename: dict[str, list[Path]] = {}
+        self.stems: dict[str, list[Path]] = {}
         self.paths: set[Path] = set()
         for path in image_paths:
             try:
@@ -92,6 +97,10 @@ class ImageLookup:
             self.paths.add(resolved_path)
             self.exact.setdefault(_normalize_path(relative), []).append(resolved_path)
             self.basename.setdefault(path.name.casefold(), []).append(resolved_path)
+            # Indexed extensionless-stem fallback (built once, never rescanned):
+            # BDD100K per-image JSON records identify their image by the bare
+            # stem, for example "cabc30fc-e7726578" for cabc30fc-e7726578.jpg.
+            self.stems.setdefault(path.stem.casefold(), []).append(resolved_path)
 
     def resolve(self, image_name: str) -> tuple[Path | None, str | None]:
         raw = str(image_name or "").strip().replace("\\", "/")
@@ -108,7 +117,6 @@ class ImageLookup:
             except OSError:
                 pass
         parts = [part for part in PurePosixPath(raw).parts if part not in (".", "", "/")]
-        normalized = _normalize_path("/".join(parts))
         # Full relative name first, then progressively shorter suffixes. This
         # supports archives whose annotation names include an extra root folder.
         for start in range(len(parts)):
@@ -124,6 +132,16 @@ class ImageLookup:
             return matches[0], None
         if len(matches) > 1:
             return None, f"ambiguous image basename: {basename}"
+        # Extensionless-stem fallback: BDD100K per-image records identify their
+        # image by the bare stem ("cabc30fc-e7726578" for ...jpg). Match only
+        # when exactly one discovered image carries that stem; multiple stem
+        # candidates are reported as ambiguous instead of guessing one file.
+        stem = PurePosixPath(raw).stem.casefold()
+        matches = self.stems.get(stem, [])
+        if len(matches) == 1:
+            return matches[0], None
+        if len(matches) > 1:
+            return None, f"ambiguous extensionless image stem: {image_name}"
         return None, f"no discovered image matches annotation identifier: {image_name}"
 
 
