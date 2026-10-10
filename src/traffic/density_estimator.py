@@ -1,4 +1,3 @@
-
 from typing import Literal
 
 TrafficLevel = Literal["Low", "Medium", "High"]
