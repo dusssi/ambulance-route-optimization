@@ -263,11 +263,16 @@ def run_bdd100k_subset(
             resolved, _ = lookup.resolve(image_name)
             if resolved is not None and resolved.resolve() == pair.image_path.resolve():
                 matching_names.append(image_name)
-        if len(parsed.image_names) != 1 or len(matching_names) != 1:
+        # ``image_names`` is de-duplicated by the parser, so a file containing
+        # several records for the same image would otherwise pass this check and
+        # double-count ground truth. ``record_count`` preserves the true record
+        # total; the per-image contract is exactly one record resolving to the
+        # paired image.
+        if parsed.record_count != 1 or len(parsed.image_names) != 1 or len(matching_names) != 1:
             _skip(
                 "annotation_record_mismatch",
-                f"expected one record resolving to the paired image; found {len(parsed.image_names)} record name(s), "
-                f"{len(matching_names)} matching",
+                f"expected exactly one record resolving to the paired image; found {parsed.record_count} record(s), "
+                f"{len(parsed.image_names)} unique name(s), {len(matching_names)} matching",
                 skipped,
                 skip_examples,
                 relative_image,
