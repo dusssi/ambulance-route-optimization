@@ -11,7 +11,7 @@ An academic prototype that connects local road-scene images, pretrained YOLO veh
 | Local image discovery, image validation, and status reporting | Implemented; requires local dataset files for dataset-specific use |
 | Annotation adapters | Implemented for BDD100K detection JSON, COCO JSON, Pascal VOC XML, and YOLO TXT with an explicit class-name file; schemas are detected/reported per local files |
 | Pretrained Ultralytics YOLO inference | Implemented with runtime model-name inspection and actionable download/path errors; **not executed successfully in this environment** because the pretrained-weight host failed TLS certificate verification |
-| Image-based load proxy | Implemented; default saturation count is a documented design choice, not a measured threshold |
+| Image-based load proxy and density class | Implemented; the continuous `[0, 1]` proxy feeds routing edge costs, and a fixed-threshold Low/Medium/High class (≤5 / 6–15 / ≥16 vehicles) is displayed alongside it. Both parameter sets are documented design choices, not measured thresholds |
 | Editable graph, two traffic scenarios, Dijkstra and A* | Implemented; A* uses the admissible zero heuristic because this illustrative graph has no calibrated geometric coordinates |
 | Matched-image evaluation and CSV export | Implemented for per-image precision/recall/F1 and supported-class vehicle-count absolute error; only runs when a local supported annotation matches the selected image |
 | Fine-tuning, video, dataset-level mAP/comparison, live traffic, real GIS, dispatch | Not implemented / outside the initial baseline |
@@ -25,7 +25,7 @@ No dataset-specific training, detection accuracy, mAP, dataset sizes, route-impr
 app.py (Streamlit)
   ├── src/data/          discovery, Pillow image loading, BDD100K/IDD annotation adapters
   ├── src/detection/     lazy Ultralytics YOLO inference, verified name-to-class mapping, OpenCV overlays
-  ├── src/traffic/       bounded count-based load proxy
+  ├── src/traffic/       bounded count-based load proxy + display-only density class (Low/Medium/High)
   ├── src/routing/       validated graph, traffic scenarios, Dijkstra, A*
   ├── src/evaluation/    matched-image, class-aware IoU evaluation
   └── src/exports/       detection/evaluation CSV serialization
@@ -136,6 +136,18 @@ saturation_count = 20 (configurable in the dashboard)
 
 The score is deterministic and bounded to `[0, 1]`; an empty set of detections yields zero. The saturation value is a heuristic parameter, not calibrated against road capacity, camera field-of-view, traffic speed, or travel-time observations. Vehicle count and the proxy must not be described as physical density or measured congestion.
 
+### Illustrative density class (display only)
+
+The same supported-vehicle count is also labeled with fixed illustrative thresholds (`src/traffic/density_estimator.py`):
+
+| Supported-vehicle count | Class |
+| --- | --- |
+| 0–5 | Low |
+| 6–15 | Medium |
+| 16 or more | High |
+
+Like the saturation count, these thresholds are prototype design choices, not calibrated density limits. The categorical label is shown next to the proxy in the dashboard for readability only: edge costs and routing always use the continuous `[0, 1]` proxy fraction, and the class never influences the computed route. The two traffic modules are complementary views of one count; there is no second, competing load implementation.
+
 ### Edge cost
 
 ```text
@@ -184,11 +196,13 @@ python -m pytest -q
 python -m compileall -q app.py src tests
 ```
 
-The tests cover discovery/missing directories, BDD-style JSON/JSONL and COCO/VOC/YOLO parser fixtures, matching/errors/category mapping, image decoding/full-image validation, proxy bounds/reproducibility and image-proxy-to-edge routing, traffic-adjusted costs, scenario-driven route changes, Dijkstra/A* optimal-cost agreement, unreachable/source-equals-destination cases, CSV schemas/values, and a Streamlit `AppTest` smoke run where supported. Test annotations/images are generated temporary fixtures; they are not described as real BDD100K or IDD samples.
+The tests cover discovery/missing directories, BDD-style JSON/JSONL and COCO/VOC/YOLO parser fixtures, matching/errors/category mapping, image decoding/full-image validation, proxy bounds/reproducibility and image-proxy-to-edge routing, traffic-adjusted costs, scenario-driven route changes, Dijkstra/A* optimal-cost agreement, unreachable/source-equals-destination cases, CSV schemas/values, and a Streamlit `AppTest` smoke run where supported. `tests/test_cv_to_routing_integration.py` additionally wires a synthetic `DetectionRun` test double through the traffic proxy and density class, the edge-load override, and a single constructed graph where Dijkstra and A* must agree on path, cost, and expanded-node count (with h(n)=0 that equality is expected; measured runtimes are asserted nonnegative, never an A* speedup). Density-classifier boundaries, invalid vehicle counts, and out-of-range/missing/ambiguous edge-load overrides are validated. Test annotations/images are generated temporary fixtures; they are not described as real BDD100K or IDD samples.
 
 ## Current environment verification record
 
-At implementation time, the checkout contained no dataset archives, no model weights, and no road-scene image; the Kaggle CLI was also not installed. Python 3.11.2 and pip were available, and PyPI package installation succeeded. The system environment has no `libGL.so.1`, so `scripts/install_dependencies.sh` selects headless OpenCV. Both Kaggle URL probes failed with `URLError: TLS/SSL connection has been closed (EOF)`. Loading the default YOLO model attempted `https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo11n.pt` and failed with `SSLCertVerificationError: unable to get local issuer certificate`. Therefore no actual BDD100K/IDD annotation schema was inspected, no pretrained checkpoint was obtained, no real-image inference was run, and no dataset detection metric was computed. Verification completed locally: **29 pytest tests passed**, Python compilation passed, and the installed stack imported as Streamlit 1.65.0, Ultralytics 8.4.172, OpenCV 4.14.0, Pillow 12.3.0, NumPy 2.4.6, pandas 2.3.3, pytest 8.4.2, and PyTorch 2.14.1 (`torch.cuda.is_available()` was false). The deterministic synthetic graph tests produced baseline path Base → Junction A → Emergency Site (cost 8.0) and congestion path Base → Junction B → Emergency Site (cost 9.0); these are computed demo outputs, not empirical results. The interface, parsers, routing, tests, and setup instructions are ready for local data/checkpoint input; model/data network access remains to be verified in the user's environment.
+At implementation time, the checkout contained no dataset archives, no model weights, and no road-scene image; the Kaggle CLI was also not installed. Python 3.11.2 and pip were available, and PyPI package installation succeeded. The system environment has no `libGL.so.1`, so `scripts/install_dependencies.sh` selects headless OpenCV. Both Kaggle URL probes failed with `URLError: TLS/SSL connection has been closed (EOF)`. Loading the default YOLO model attempted `https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo11n.pt` and failed with `SSLCertVerificationError: unable to get local issuer certificate`. Therefore no actual BDD100K/IDD annotation schema was inspected, no pretrained checkpoint was obtained, no real-image inference was run, and no dataset detection metric was computed. Verification completed locally: **29 pytest tests passed** at that time, Python compilation passed, and the installed stack imported as Streamlit 1.65.0, Ultralytics 8.4.172, OpenCV 4.14.0, Pillow 12.3.0, NumPy 2.4.6, pandas 2.3.3, pytest 8.4.2, and PyTorch 2.14.1 (`torch.cuda.is_available()` was false). The deterministic synthetic graph tests produced baseline path Base → Junction A → Emergency Site (cost 8.0) and congestion path Base → Junction B → Emergency Site (cost 9.0); these are computed demo outputs, not empirical results. The interface, parsers, routing, tests, and setup instructions are ready for local data/checkpoint input; model/data network access remains to be verified in the user's environment.
+
+**Integration verification update (density-class wiring):** after connecting `src/traffic/density_estimator.py` into the package API and dashboard, the suite was re-run in this checkout with `python -m pytest -q` (Python 3.11.2; ultralytics/torch not installed or exercised, matching the suite's lazy-import design): **47 tests passed**, alongside `python -m compileall -q app.py src tests` and a Streamlit `AppTest` render with no exceptions. The 18 added integration tests use synthetic `DetectionRun` test doubles and verify module wiring and deterministic arithmetic only — not detector accuracy, real-image results, or ambulance travel-time claims.
 
 ## Troubleshooting
 

@@ -23,6 +23,7 @@ from src.exports.csv_export import detections_to_csv, evaluation_to_csv
 from src.routing.algorithms import compare_algorithms
 from src.routing.graph import RoadEdge, WeightedGraph, build_weighted_graph
 from src.routing.scenarios import SCENARIOS, TrafficScenario, apply_edge_load_override, scenario_edges
+from src.traffic.density_estimator import estimate_density
 from src.traffic.estimation import DEFAULT_SATURATION_COUNT, TrafficLoadEstimate, estimate_traffic_load
 
 ROOT = Path(__file__).resolve().parent
@@ -441,11 +442,16 @@ with detection_tab:
     active_proxy: TrafficLoadEstimate | None = None
     if current_run_is_relevant:
         active_proxy = estimate_traffic_load(active_run.vehicle_count, int(saturation_count))
-        st.metric("Image-based load proxy (0–1)", f"{active_proxy.load_fraction:.3f}")
+        density_level = estimate_density(active_run.vehicle_count)
+        proxy_columns = st.columns(2)
+        proxy_columns[0].metric("Image-based load proxy (0–1)", f"{active_proxy.load_fraction:.3f}")
+        proxy_columns[1].metric("Illustrative density class (display only)", density_level)
         st.write(f"Formula: `{active_proxy.formula}`")
         st.caption(
             f"Input: {active_run.vehicle_count} supported vehicle detections from {active_run.image_name}. "
-            "This is a reproducible image-count proxy, not physical traffic density, speed, queue length, or ETA."
+            "This is a reproducible image-count proxy, not physical traffic density, speed, queue length, or ETA. "
+            "The Low/Medium/High class uses fixed illustrative thresholds (≤5 / 6–15 / ≥16 vehicles) for display; "
+            "routing edge costs use only the continuous proxy, not the class."
         )
         st.session_state["active_traffic_load"] = active_proxy.load_fraction
         st.session_state["active_traffic_source"] = active_run.image_name
