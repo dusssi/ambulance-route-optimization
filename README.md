@@ -68,13 +68,22 @@ The app does not download datasets automatically. Obtain them from the specified
 - [BDD100K Kaggle source](https://www.kaggle.com/datasets/alvaromalfaro/bdd100k)
 - [IDD Kaggle source](https://www.kaggle.com/datasets/mitanshuchakrawarty/new-idd-dataset)
 
-One possible CLI workflow, if you have installed/configured the Kaggle CLI and accepted the source terms, is:
+### Windows PowerShell (recommended for this repository)
 
-```bash
-python -m pip install kaggle
-kaggle datasets download -d alvaromalfaro/bdd100k -p data/bdd100k --unzip
-kaggle datasets download -d mitanshuchakrawarty/new-idd-dataset -p data/idd --unzip
+This repository includes `scripts/download_datasets.ps1`. It downloads the selected full Kaggle mirror into the ignored local `data/` directory. It does **not** upload dataset files to GitHub.
+
+```powershell
+# From E:\\ambulance-route-optimization
+Set-ExecutionPolicy -Scope Process Bypass
+.\\scripts\\download_datasets.ps1 -Dataset bdd100k
+
+# Optional, only if you also need IDD and have enough disk space:
+.\\scripts\\download_datasets.ps1 -Dataset idd
 ```
+
+Before running it, review the [BDD100K Kaggle source](https://www.kaggle.com/datasets/alvaromalfaro/bdd100k) and [IDD Kaggle source](https://www.kaggle.com/datasets/mitanshuchakrawarty/new-idd-dataset), and accept their applicable terms. The script installs the Kaggle CLI if needed and expects a Kaggle API token at `%USERPROFILE%\\.kaggle\\kaggle.json` or the `KAGGLE_USERNAME`/`KAGGLE_KEY` environment variables. Never commit that token.
+
+**Storage note:** these commands download complete dataset mirrors, not a small subset. Check free disk space before starting. Given the size of road-scene datasets, do not download both unless you have sufficient storage. If disk space is limited, use a small, explicitly selected evaluation subset prepared separately.
 
 Keep Kaggle credentials outside this repository. Do not commit a Kaggle token, `kaggle.json`, or private credentials. Manual download/extraction is also supported. The app recursively discovers supported images (`.jpg`, `.jpeg`, `.png`, `.bmp`, `.webp`, `.tif`, `.tiff`) and candidate `.json`, `.jsonl`, `.xml`, and `.txt` annotation files; it does not assume an archive layout or annotation schema.
 
