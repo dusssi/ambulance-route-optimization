@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import xml.etree.ElementTree as ET
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -169,7 +170,9 @@ def parse_pascal_voc_xml(path: str | Path) -> ParsedAnnotationFile:
     )
 
 
+@lru_cache(maxsize=16)
 def _load_class_names(root: Path) -> tuple[str, ...] | None:
+    """Read a dataset class-name map once, not once per YOLO label file."""
     candidates = ("classes.txt", "classes.names", "obj.names", "labels.names")
     for name in candidates:
         for path in root.rglob(name):

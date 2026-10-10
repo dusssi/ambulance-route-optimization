@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
 from src.data.annotations.scan import scan_annotations
@@ -73,6 +74,61 @@ def test_bdd_json_parses_categories_and_matches_image(tmp_path: Path) -> None:
     assert {box.vehicle_class for box in scan.boxes_for(image_path)} == {"car", "motorcycle"}
     assert scan.unmapped_categories["person"] == 1
     assert any("empty.jpg" in issue for issue in scan.issues)
+
+
+def test_bdd_frames_objects_format_filters_nonvehicles_and_matches_image(tmp_path: Path) -> None:
+    root = tmp_path / "bdd100k"
+    image_path = root / "images" / "train" / "road.jpg"
+    _make_image(image_path)
+    labels = root / "labels" / "road.json"
+    labels.parent.mkdir(parents=True)
+    labels.write_text(json.dumps({
+        "name": "images/train/road.jpg",
+        "frames": [{
+            "objects": [
+                {"category": "car", "box2d": {"x1": 10, "y1": 12, "x2": 60, "y2": 55}},
+                {"category": "traffic sign", "box2d": {"x1": 2, "y1": 3, "x2": 8, "y2": 20}},
+            ],
+        }],
+    }), encoding="utf-8")
+
+    scan = scan_annotations(discover_dataset("BDD100K", root))
+    assert scan.parsed_formats == {"BDD100K detection JSON": 1}
+    assert scan.is_matched(image_path)
+    assert scan.has_valid_match(image_path)
+    assert len(scan.boxes_for(image_path)) == 1
+    assert scan.boxes_for(image_path)[0].vehicle_class == "car"
+    assert scan.unmapped_categories["traffic sign"] == 1
+
+
+def test_bdd_frame_missing_vehicle_box_and_multiframe_record_are_invalid(tmp_path: Path) -> None:
+    root = tmp_path / "bdd100k"
+    image_path = root / "images" / "road.jpg"
+    _make_image(image_path)
+    labels = root / "labels" / "road.json"
+    labels.parent.mkdir(parents=True)
+    labels.write_text(json.dumps({
+        "name": "road.jpg",
+        "frames": [{"objects": [{"category": "car"}]}],
+    }), encoding="utf-8")
+    scan = scan_annotations(discover_dataset("BDD100K", root))
+    assert scan.is_invalid(image_path)
+    assert any("has no box2d" in issue for issue in scan.issues)
+
+    labels.write_text(json.dumps({
+        "name": "road.jpg",
+        "frames": [{"objects": []}, {"objects": []}],
+    }), encoding="utf-8")
+    scan = scan_annotations(discover_dataset("BDD100K", root))
+    assert scan.is_invalid(image_path)
+    assert any("exactly one frame" in issue for issue in scan.issues)
+
+
+def test_annotation_xyxy_rejects_negative_origin() -> None:
+    from src.data.annotations.common import parse_xyxy
+
+    with pytest.raises(ValueError, match="nonnegative"):
+        parse_xyxy((-1, 0, 10, 10))
 
 
 def test_matched_image_with_malformed_label_is_withheld_from_evaluation(tmp_path: Path) -> None:

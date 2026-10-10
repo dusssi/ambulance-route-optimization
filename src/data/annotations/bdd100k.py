@@ -93,14 +93,19 @@ def parse_bdd100k_json(
             if not isinstance(image_name, str) or not image_name.strip():
                 continue
 
-            # Support BDD100K detection JSON: name + frames[0].objects.
+            # Support the per-image BDD100K shape: name + one frame + objects.
+            # A multi-frame record cannot safely be matched to one still image;
+            # withhold it rather than silently evaluating only frames[0].
             frames = record.get("frames")
             if isinstance(frames, list):
                 recognized = True
                 image_names.append(image_name)
-                if not frames:
+                if len(frames) != 1:
                     invalid_image_names.append(image_name)
-                    issues.append(f"{path}: record {record_number} has an empty frames array")
+                    issues.append(
+                        f"{path}: record {record_number} must contain exactly one frame for a single-image annotation; "
+                        f"found {len(frames)}"
+                    )
                     continue
 
                 frame = frames[0]
@@ -118,8 +123,21 @@ def parse_bdd100k_json(
 
                     category = obj.get("category")
                     box = obj.get("box2d")
-                    if not isinstance(category, str) or not isinstance(box, dict):
-                        # Polygons/attributes are not bounding-box annotations.
+                    if not isinstance(category, str) or not category.strip():
+                        invalid_image_names.append(image_name)
+                        issues.append(
+                            f"{path}: record {record_number}, object {object_number} has no valid category"
+                        )
+                        continue
+                    if not isinstance(box, dict):
+                        # Some non-vehicle shapes (for example polygons) are
+                        # not object-detection boxes. A missing box for a mapped
+                        # vehicle, however, makes this image unevaluable.
+                        if canonical_vehicle_class(category) is not None:
+                            invalid_image_names.append(image_name)
+                            issues.append(
+                                f"{path}: record {record_number}, object {object_number} ({category}) has no box2d"
+                            )
                         continue
 
                     try:

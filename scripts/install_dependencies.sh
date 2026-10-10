@@ -5,7 +5,8 @@
 set -euo pipefail
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
-"$PYTHON_BIN" -m pip install --upgrade pip
+# Use the environment's existing pip; upgrading it is unnecessary for this setup
+# and can destabilize managed runtimes such as Colab.
 "$PYTHON_BIN" -m pip install -r requirements.txt
 if ! "$PYTHON_BIN" -c 'import cv2' >/dev/null 2>&1; then
   "$PYTHON_BIN" -m pip uninstall -y opencv-python || true
