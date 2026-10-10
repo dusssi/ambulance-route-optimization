@@ -245,6 +245,15 @@ def run_bdd100k_subset(
 
         parsed = parse_bdd100k_json(pair.annotation_path)
         if not parsed.recognized:
+            # This runner has already established a unique same-stem image/JSON
+            # pair. Use that filename only for a single per-image record whose
+            # JSON omits its image identifier; the parser rejects multi-record
+            # fallback so a global label file cannot be assigned to one image.
+            parsed = parse_bdd100k_json(
+                pair.annotation_path,
+                image_name_override=pair.image_path.name,
+            )
+        if not parsed.recognized:
             detail = "; ".join(parsed.issues[:2]) or "unsupported JSON structure"
             _skip("annotation_unrecognized", detail, skipped, skip_examples, relative_image, skip_example_limit)
             continue

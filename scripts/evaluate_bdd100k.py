@@ -257,7 +257,7 @@ def _write_results(
             "name": "BDD100K",
             "root": str(result.dataset_root),
             "pairing_rule": "unique case-insensitive image/JSON-or-JSONL basename (same stem)",
-            "annotation_parser": "BDD100K per-image JSON with exactly one image record; frames must contain exactly one frame",
+            "annotation_parser": "BDD100K per-image JSON with exactly one record; a missing image name is inferred only from a unique same-stem image pair; frames must contain exactly one frame",
             "max_per_image_annotation_bytes": max_annotation_bytes,
         },
         "sampling": {

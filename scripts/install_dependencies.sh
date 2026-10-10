@@ -10,6 +10,6 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 "$PYTHON_BIN" -m pip install -r requirements.txt
 if ! "$PYTHON_BIN" -c 'import cv2' >/dev/null 2>&1; then
   "$PYTHON_BIN" -m pip uninstall -y opencv-python || true
-  "$PYTHON_BIN" -m pip install --force-reinstall --no-deps 'opencv-python-headless>=4.10,<5'
+  "$PYTHON_BIN" -m pip install --force-reinstall --no-deps 'opencv-python-headless==4.14.0.94'
 fi
 "$PYTHON_BIN" -c 'import cv2; print("OpenCV", cv2.__version__)'

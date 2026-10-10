@@ -213,8 +213,6 @@ st.markdown(
       }
       @media (max-width: 900px) {
         [data-testid="stMainBlockContainer"] { padding-inline: 1rem; }
-      }
-      @media (max-width: 680px) {
         div[data-testid="stHorizontalBlock"] { flex-wrap: wrap !important; gap: 0.55rem !important; }
         div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
           flex: 1 1 calc(50% - 0.4rem) !important;

@@ -83,6 +83,7 @@ def test_cli_artifacts_include_per_image_metrics_and_reproducibility_manifest(tm
     assert summary["metrics_by_confidence"]["0.1"]["sample_size"] == 1
     assert manifest["sampling"]["seed"] == 42
     assert manifest["model"]["supported_vehicle_ids_from_loaded_checkpoint"] == {"2": "car"}
+    assert "unique same-stem image pair" in manifest["dataset"]["annotation_parser"]
     assert "Not mAP" in summary["metric_scope"]
 
 

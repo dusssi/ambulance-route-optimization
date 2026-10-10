@@ -106,6 +106,45 @@ def test_subset_evaluation_compares_thresholds_with_one_inference_per_image(tmp_
     assert result.aggregates["0.8"]["true_positives"] == 1
 
 
+def test_subset_uses_unique_same_stem_for_single_record_without_name(tmp_path: Path) -> None:
+    root = tmp_path / "bdd100k"
+    _image, annotation = _make_pair(root, "road-no-name", [_car_box()])
+    annotation.write_text(
+        json.dumps({"frames": [{"objects": [_car_box()]}]}),
+        encoding="utf-8",
+    )
+    detector = FakeDetector()
+
+    result = run_bdd100k_subset(root, detector, sample_size=1)
+
+    assert result.sample_size == 1
+    assert result.skipped_by_reason == {}
+    assert len(detector.calls) == 1
+    assert result.evaluated_images[0].evaluations[0].ground_truth_vehicle_count == 1
+    assert result.evaluated_images[0].evaluations[0].true_positives == 1
+
+
+def test_subset_skips_truncated_streamed_json_instead_of_aborting(tmp_path: Path) -> None:
+    root = tmp_path / "bdd100k"
+    image = root / "images" / "broken.jpg"
+    image.parent.mkdir(parents=True)
+    Image.new("RGB", (100, 80)).save(image)
+    annotation = root / "labels" / "broken.json"
+    annotation.parent.mkdir(parents=True)
+    annotation.write_text(
+        '[{"name":"broken.jpg","frames":[{"objects":[]}]}, {"name":',
+        encoding="utf-8",
+    )
+    detector = FakeDetector()
+
+    result = run_bdd100k_subset(root, detector, sample_size=1)
+
+    assert result.sample_size == 0
+    assert result.skipped_by_reason == {"annotation_unrecognized": 1}
+    assert "invalid JSON" in result.skipped_examples[0]
+    assert detector.calls == []
+
+
 def test_subset_sampling_is_repeatable_and_reports_invalid_images(tmp_path: Path) -> None:
     root = tmp_path / "bdd100k"
     _make_pair(root, "a-good", [_car_box()])

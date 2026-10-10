@@ -10,9 +10,27 @@ from src.data.discovery import DatasetDiscovery
 from src.data.categories import canonical_vehicle_class
 
 
-def _parse_bdd_file(path: Path, discovery: DatasetDiscovery) -> ParsedAnnotationFile:
+def _parse_bdd_file(
+    path: Path,
+    discovery: DatasetDiscovery,
+    image_paths_by_stem: dict[str, list[Path]],
+) -> ParsedAnnotationFile:
     if path.suffix.casefold() in {".json", ".jsonl"}:
         bdd = parse_bdd100k_json(path)
+        if not bdd.recognized:
+            same_stem_images = image_paths_by_stem.get(path.stem.casefold(), [])
+            if len(same_stem_images) == 1:
+                filename_matched = parse_bdd100k_json(
+                    path,
+                    image_name_override=same_stem_images[0].name,
+                )
+                if filename_matched.recognized:
+                    bdd = filename_matched
+                else:
+                    bdd = ParsedAnnotationFile(
+                        False,
+                        issues=tuple(dict.fromkeys(bdd.issues + filename_matched.issues)),
+                    )
         if bdd.recognized or path.suffix.casefold() == ".jsonl":
             return bdd
         # Some repackaged archives use COCO JSON instead of the official
@@ -50,11 +68,15 @@ def scan_annotations(discovery: DatasetDiscovery) -> AnnotationScan:
         scan.issues.extend(discovery.scan_errors)
         return scan
     lookup = ImageLookup(discovery.root, discovery.image_paths)
+    image_paths_by_stem: dict[str, list[Path]] = {}
+    if discovery.dataset_name.casefold() in {"bdd100k", "bdd"}:
+        for image_path in discovery.image_paths:
+            image_paths_by_stem.setdefault(image_path.stem.casefold(), []).append(image_path)
 
     for annotation_path in discovery.annotation_paths:
         try:
             if discovery.dataset_name.casefold() in {"bdd100k", "bdd"}:
-                parsed = _parse_bdd_file(annotation_path, discovery)
+                parsed = _parse_bdd_file(annotation_path, discovery, image_paths_by_stem)
             else:
                 parsed = _parse_idd_file(annotation_path, discovery)
         except Exception as exc:  # A bad file must not abort the remaining scan.
