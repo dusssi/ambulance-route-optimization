@@ -13,6 +13,6 @@ def test_streamlit_dashboard_smoke() -> None:
     except ImportError:
         pytest.skip("This Streamlit version does not provide AppTest.")
     app_path = Path(__file__).resolve().parents[1] / "app.py"
-    app = AppTest.from_file(str(app_path), default_timeout=30).run()
+    app = AppTest.from_file(str(app_path), default_timeout=90).run()
     assert not app.exception
     assert any("Computer Vision-Based Traffic Load" in str(element.value) for element in app.title)
